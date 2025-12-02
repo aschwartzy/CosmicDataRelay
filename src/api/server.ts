@@ -1,9 +1,15 @@
 import Fastify from 'fastify';
 import { PrismaClient } from '@prisma/client';
 import { ResolvedSourceConfig } from '../config';
+import { RETENTION_WINDOW_MS } from '../shared/constants';
 
 export function createApiServer(prisma: PrismaClient, configs: ResolvedSourceConfig[]) {
   const fastify = Fastify({ logger: true });
+
+  const serializeConfig = (config: ResolvedSourceConfig) => {
+    const { outputParser: _parser, ...rest } = config;
+    return rest;
+  };
 
   fastify.addHook('onRequest', (request, _reply, done) => {
     request.log.info({ method: request.method, url: request.url }, 'incoming request');
@@ -17,32 +23,47 @@ export function createApiServer(prisma: PrismaClient, configs: ResolvedSourceCon
 
   fastify.get('/api/sources', async () => {
     const sources = await prisma.source.findMany({
-      include: {
-        statuses: { orderBy: { runAt: 'desc' }, take: 1 }
+      select: {
+        id: true,
+        name: true,
+        description: true,
+        url: true,
+        enabled: true,
+        lastRunAt: true,
+        lastStatus: true,
+        failureCount: true
       }
     });
     return { sources };
   });
 
   fastify.get<{ Params: { id: string } }>('/api/sources/:id', async (request, reply) => {
+    const config = configs.find((entry) => entry.id === request.params.id);
     const source = await prisma.source.findUnique({
       where: { id: request.params.id },
       include: { statuses: { orderBy: { runAt: 'desc' }, take: 5 } }
     });
 
-    if (!source) {
+    if (!source || !config) {
       reply.code(404);
       return { message: 'Source not found' };
     }
 
-    return source;
+    return { ...source, config: serializeConfig(config) };
   });
 
   fastify.get<{ Params: { id: string } }>('/api/sources/:id/latest', async (request, reply) => {
     const sourceId = request.params.id;
+    const source = await prisma.source.findUnique({ where: { id: sourceId } });
+    if (!source || !source.enabled) {
+      reply.code(404);
+      return { message: 'Source not found or disabled' };
+    }
+
+    const cutoff = new Date(Date.now() - RETENTION_WINDOW_MS);
     const latest = await prisma.sourceData.findFirst({
-      where: { sourceId },
-      orderBy: { collectedAt: 'desc' }
+      where: { sourceId, scrapedAt: { gte: cutoff } },
+      orderBy: { scrapedAt: 'desc' }
     });
 
     if (!latest) {
@@ -53,15 +74,37 @@ export function createApiServer(prisma: PrismaClient, configs: ResolvedSourceCon
     return latest;
   });
 
-  fastify.get<{ Params: { id: string }; Querystring: { limit?: string } }>(
+  fastify.get<{ Params: { id: string }; Querystring: { from?: string; to?: string } }>(
     '/api/sources/:id/history',
     async (request, reply) => {
       const sourceId = request.params.id;
-      const limit = request.query.limit ? Number(request.query.limit) : 20;
+      const source = await prisma.source.findUnique({ where: { id: sourceId } });
+      if (!source || !source.enabled) {
+        reply.code(404);
+        return { message: 'Source not found or disabled' };
+      }
+
+      const now = Date.now();
+      const defaultFrom = new Date(now - RETENTION_WINDOW_MS);
+      const queryFrom = request.query.from ? new Date(request.query.from) : defaultFrom;
+      const queryTo = request.query.to ? new Date(request.query.to) : new Date(now);
+
+      if (Number.isNaN(queryFrom.getTime()) || Number.isNaN(queryTo.getTime())) {
+        reply.code(400);
+        return { message: 'Invalid date range' };
+      }
+
+      const lowerBound = queryFrom < defaultFrom ? defaultFrom : queryFrom;
+      const upperBound = queryTo > new Date(now) ? new Date(now) : queryTo;
+
+      if (lowerBound > upperBound) {
+        reply.code(400);
+        return { message: 'from must be before to' };
+      }
+
       const history = await prisma.sourceData.findMany({
-        where: { sourceId },
-        orderBy: { collectedAt: 'desc' },
-        take: limit
+        where: { sourceId, scrapedAt: { gte: lowerBound, lte: upperBound } },
+        orderBy: { scrapedAt: 'asc' }
       });
 
       if (!history.length) {
@@ -69,11 +112,11 @@ export function createApiServer(prisma: PrismaClient, configs: ResolvedSourceCon
         return { message: 'No history found for source' };
       }
 
-      return history;
+      return { from: lowerBound, to: upperBound, data: history };
     }
   );
 
-  fastify.get('/api/config/sources', async () => configs);
+  fastify.get('/api/config/sources', async () => configs.map((config) => serializeConfig(config)));
 
   return fastify;
 }

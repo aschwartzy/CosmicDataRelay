@@ -21,6 +21,9 @@ model Source {
   description String?
   enabled     Boolean       @default(false)
   config      Json
+  lastRunAt   DateTime?
+  lastStatus  CrawlStatus?
+  failureCount Int          @default(0)
   createdAt   DateTime      @default(now())
   updatedAt   DateTime      @updatedAt
   data        SourceData[]
@@ -30,7 +33,8 @@ model Source {
 model SourceData {
   id          Int      @id @default(autoincrement())
   sourceId    String
-  collectedAt DateTime @default(now())
+  timestamp   DateTime?
+  scrapedAt   DateTime @default(now())
   raw         Json?
   parsed      Json
   Source      Source   @relation(fields: [sourceId], references: [id], onDelete: Cascade)

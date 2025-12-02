@@ -11,10 +11,10 @@ async function bootstrap() {
   await upsertSources(prisma, configs);
 
   const api = createApiServer(prisma, configs);
-  await registerWsServer(api);
+  await registerWsServer(api, prisma, configs);
 
   const scheduler = new Scheduler(prisma, configs, 2);
-  scheduler.start();
+  await scheduler.start();
 
   const port = process.env.PORT ? Number(process.env.PORT) : 3000;
   await api.listen({ port, host: '0.0.0.0' });
