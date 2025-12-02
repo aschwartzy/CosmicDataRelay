@@ -1,6 +1,13 @@
 import Fastify from 'fastify';
+import { chromium } from 'playwright';
 import { PrismaClient } from '@prisma/client';
-import { ResolvedSourceConfig } from '../config';
+import {
+  ResolvedSourceConfig,
+  SourceConfig,
+  formatZodError,
+  resolveSourceConfig,
+  sourceSchema
+} from '../config';
 import { RETENTION_WINDOW_MS } from '../shared/constants';
 
 export function createApiServer(prisma: PrismaClient, configs: ResolvedSourceConfig[]) {
@@ -117,6 +124,72 @@ export function createApiServer(prisma: PrismaClient, configs: ResolvedSourceCon
   );
 
   fastify.get('/api/config/sources', async () => configs.map((config) => serializeConfig(config)));
+
+  fastify.post<{ Body: SourceConfig }>('/api/preview', async (request, reply) => {
+    if (process.env.NODE_ENV === 'production') {
+      reply.code(403);
+      return { message: 'Preview endpoint disabled in production' };
+    }
+
+    const parsed = sourceSchema.safeParse(request.body);
+    if (!parsed.success) {
+      reply.code(400);
+      return { message: formatZodError(parsed.error) };
+    }
+
+    const config = resolveSourceConfig(parsed.data);
+    const browser = await chromium.launch({ headless: config.browser.headless });
+    const context = await browser.newContext({
+      userAgent: config.browser.userAgent,
+      viewport: config.browser.viewport
+    });
+    const page = await context.newPage();
+
+    const results: Array<{ field: string; matches: number; value: string | null; error?: string }> = [];
+    const warnings: string[] = [];
+
+    try {
+      await page.goto(config.url, {
+        timeout: config.browser.timeouts.navigationMs,
+        waitUntil: 'networkidle'
+      });
+
+      for (const selector of config.selectorList) {
+        const locator = selector.css ? page.locator(selector.css) : page.locator(`xpath=${selector.xpath}`);
+        try {
+          await locator.first().waitFor({ state: 'attached', timeout: config.browser.timeouts.actionMs });
+          const matchCount = await locator.count();
+          const element = locator.first();
+          const value = selector.attribute
+            ? await element.getAttribute(selector.attribute)
+            : await element.textContent();
+          const resolvedValue = value?.toString().trim() ?? null;
+
+          if (matchCount > 1) {
+            const warning = `Selector for field "${selector.field}" matched ${matchCount} elements`;
+            warnings.push(warning);
+          }
+
+          results.push({ field: selector.field, matches: matchCount, value: resolvedValue });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : 'Unknown error';
+          const warning = `Selector for field "${selector.field}" failed: ${message}`;
+          warnings.push(warning);
+          results.push({ field: selector.field, matches: 0, value: null, error: message });
+        }
+      }
+
+      return { url: config.url, results, warnings };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      request.log.error({ err: error }, 'preview crawl failed');
+      reply.code(500);
+      return { message: 'Preview failed', error: message, warnings };
+    } finally {
+      await context.close();
+      await browser.close();
+    }
+  });
 
   return fastify;
 }
