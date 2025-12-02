@@ -27,21 +27,25 @@ export async function crawlSource(prisma: PrismaClient, config: ResolvedSourceCo
 
   try {
     const browser = await getBrowser(config.browser.headless);
-    const context = await browser.newContext();
+    const context = await browser.newContext({
+      userAgent: config.browser.userAgent,
+      viewport: config.browser.viewport
+    });
     const page = await context.newPage();
-    await page.goto(config.url, { timeout: config.browser.timeout, waitUntil: 'networkidle' });
+    await page.goto(config.url, { timeout: config.browser.timeouts.navigationMs, waitUntil: 'networkidle' });
 
     const raw: Record<string, unknown> = {};
-    for (const selector of config.selectors) {
-      const element = await page.waitForSelector(selector.selector, { timeout: config.browser.timeout });
-      if (!element) {
+    for (const selector of config.selectorList) {
+      const locator = selector.css ? page.locator(selector.css) : page.locator(`xpath=${selector.xpath}`);
+      const handle = await locator.first();
+      try {
+        await handle.waitFor({ state: 'attached', timeout: config.browser.timeouts.actionMs });
+        const value = selector.attribute ? await handle.getAttribute(selector.attribute) : await handle.textContent();
+        raw[selector.field] = value?.toString().trim() ?? null;
+      } catch (error) {
+        console.error(`[crawl] selector failed for ${config.id} field ${selector.field}:`, error);
         raw[selector.field] = null;
-        continue;
       }
-      const value = selector.attribute
-        ? await element.getAttribute(selector.attribute)
-        : await element.textContent();
-      raw[selector.field] = value?.toString().trim() ?? null;
     }
 
     const parsed = applyParsers(raw, config.parse);
