@@ -1,0 +1,47 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+enum CrawlStatus {
+  IDLE
+  RUNNING
+  SUCCESS
+  ERROR
+}
+
+model Source {
+  id          String        @id @default(cuid())
+  name        String        @unique
+  url         String
+  description String?
+  config      Json
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  data        SourceData[]
+  statuses    SourceStatus[]
+}
+
+model SourceData {
+  id          Int      @id @default(autoincrement())
+  sourceId    String
+  collectedAt DateTime @default(now())
+  raw         Json?
+  parsed      Json
+  Source      Source   @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+}
+
+model SourceStatus {
+  id        Int         @id @default(autoincrement())
+  sourceId  String
+  status    CrawlStatus
+  message   String?
+  runAt     DateTime    @default(now())
+  nextRunAt DateTime?
+  attempts  Int         @default(0)
+  Source    Source      @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+}

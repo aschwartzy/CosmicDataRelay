@@ -1,0 +1,26 @@
+{
+  "name": "cosmic-data-relay",
+  "version": "0.1.0",
+  "description": "Data sourcing and relaying service",
+  "type": "commonjs",
+  "scripts": {
+    "dev": "pnpm exec nodemon --watch src --ext ts --exec pnpm exec ts-node src/index.ts",
+    "build": "pnpm exec tsc",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@fastify/websocket": "^9.0.2",
+    "@prisma/client": "^5.20.0",
+    "fastify": "^4.26.2",
+    "nodemon": "^3.1.4",
+    "playwright": "^1.48.0",
+    "prisma": "^5.20.0",
+    "ts-node": "^10.9.2",
+    "yaml": "^2.5.1",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.5.4",
+    "typescript": "^5.6.2"
+  }
+}
