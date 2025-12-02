@@ -3,6 +3,7 @@ import path from 'path';
 import YAML from 'yaml';
 import { z } from 'zod';
 import { PrismaClient } from '@prisma/client';
+import { MIN_CRAWL_INTERVAL_MS } from '../shared/constants';
 
 const browserTimeoutSchema = z.object({
   navigationMs: z.number().int().positive().default(30000),
@@ -41,12 +42,13 @@ const selectorsSchema = z.record(selectorSchema);
 
 const parseRuleSchema = z.object({
   field: z.string(),
-  type: z.enum(['string', 'number', 'boolean', 'date', 'json']).default('string'),
+  targetField: z.string().optional(),
+  type: z.enum(['string', 'int', 'float', 'datetime', 'number']).default('string'),
   regex: z.string().optional(),
   unit: z.string().optional()
 });
 
-const outputFieldTypeSchema = z.enum(['string', 'number', 'boolean', 'date', 'json']);
+const outputFieldTypeSchema = z.enum(['string', 'int', 'float', 'number', 'boolean', 'datetime', 'json']);
 
 const sourceSchema = z.object({
   id: z.string(),
@@ -88,8 +90,19 @@ export interface ResolvedSourceConfig extends Omit<SourceConfig, 'selectors' | '
 const typeToSchema: Record<string, () => z.ZodTypeAny> = {
   string: () => z.string(),
   number: () => z.number(),
+  float: () => z.preprocess((v) => (typeof v === 'string' ? Number(v) : v), z.number()),
+  int: () =>
+    z.preprocess(
+      (v) =>
+        typeof v === 'string'
+          ? Number.parseInt(v as string, 10)
+          : typeof v === 'number'
+            ? Math.trunc(v)
+            : v,
+      z.number().int()
+    ),
   boolean: () => z.boolean(),
-  date: () => z.preprocess((v) => (typeof v === 'string' || v instanceof Date ? new Date(v) : v), z.date()),
+  datetime: () => z.preprocess((v) => (typeof v === 'string' || v instanceof Date ? new Date(v) : v), z.date()),
   json: () => z.any()
 };
 
@@ -108,36 +121,32 @@ function buildOutputParser(outputSchema: SourceConfig['outputSchema']) {
 function applyParseRule(value: unknown, rule: z.infer<typeof parseRuleSchema>) {
   if (value == null) return value;
   let parsedValue: unknown = value;
+
   if (typeof parsedValue === 'string') {
     const trimmed = parsedValue.trim();
     parsedValue = trimmed === '' ? parsedValue : trimmed;
+
     if (rule.unit) {
-      parsedValue = trimmed.replace(rule.unit, '').trim();
+      parsedValue = trimmed.replace(new RegExp(rule.unit, 'gi'), '').trim();
     }
+
     if (rule.regex) {
-      const match = trimmed.match(new RegExp(rule.regex));
+      const regex = new RegExp(rule.regex);
+      const match = trimmed.match(regex);
       parsedValue = match?.[1] ?? match?.[0] ?? parsedValue;
     }
   }
 
   switch (rule.type) {
+    case 'float':
     case 'number':
-      return Number(parsedValue);
-    case 'boolean':
-      return typeof parsedValue === 'string'
-        ? ['true', '1', 'yes'].includes(parsedValue.toLowerCase())
-        : Boolean(parsedValue);
-    case 'date':
-      return new Date(parsedValue as string);
-    case 'json':
-      if (typeof parsedValue === 'string') {
-        try {
-          return JSON.parse(parsedValue);
-        } catch (error) {
-          return parsedValue;
-        }
-      }
-      return parsedValue;
+      return Number.parseFloat(String(parsedValue));
+    case 'int':
+      return Number.parseInt(String(parsedValue), 10);
+    case 'datetime': {
+      const dateValue = parsedValue instanceof Date ? parsedValue : new Date(String(parsedValue));
+      return Number.isNaN(dateValue.getTime()) ? parsedValue : dateValue;
+    }
     default:
       return parsedValue;
   }
@@ -185,7 +194,7 @@ export async function loadSourceConfigs(
       }
 
       const baseConfig = parsed.data;
-      const effectiveIntervalMs = Math.max(20000, baseConfig.schedule.intervalMs);
+      const effectiveIntervalMs = Math.max(MIN_CRAWL_INTERVAL_MS, baseConfig.schedule.intervalMs);
       const schedule: ResolvedSchedule = {
         ...baseConfig.schedule,
         effectiveIntervalMs
@@ -222,7 +231,8 @@ export function applyParsers(raw: Record<string, unknown>, rules: SourceConfig['
   const parsed: Record<string, unknown> = { ...raw };
   for (const rule of rules) {
     const value = parsed[rule.field];
-    parsed[rule.field] = applyParseRule(value, rule);
+    const target = rule.targetField ?? rule.field;
+    parsed[target] = applyParseRule(value, rule);
   }
   return parsed;
 }
