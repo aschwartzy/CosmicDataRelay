@@ -54,9 +54,10 @@ parse:
 ```
 - `field`: Name from `selectors`.
 - `targetField` (optional): Write the parsed value to a different key.
-- `type`: Casts to `string`, `int`, `float`, `number`, or `datetime`.
+- `type`: Casts to `string`, `int`, `float`, `number`, `datetime`, or `json`.
 - `regex`: If provided, the first capture group or match is used.
 - `unit`: Removes matching substrings (e.g., currency symbols) before casting.
+- `json`: Attempts `JSON.parse` on string inputs; if parsing fails or the input is not a string, the original value is kept.
 
 ## Output schema
 `outputSchema` must declare every field you expect to emit after parsing. Values missing after parsing default to `null` but must satisfy the declared type when present.
