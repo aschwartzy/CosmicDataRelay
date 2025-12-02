@@ -1,0 +1,27 @@
+id: example-source
+name: Example Source
+url: https://example.com
+description: Example YAML configuration for CosmicDataRelay
+browser:
+  headless: true
+  timeout: 30000
+schedule:
+  minInterval: 300
+  jitter: 30
+  backoffMultiplier: 2
+  maxBackoff: 1800
+selectors:
+  - field: title
+    selector: "h1"
+  - field: description
+    selector: "p"
+parse:
+  - field: title
+    type: string
+    regex: ''
+  - field: description
+    type: string
+    regex: ''
+outputSchema:
+  title: string
+  description: string
