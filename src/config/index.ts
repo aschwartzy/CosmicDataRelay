@@ -50,7 +50,7 @@ const parseRuleSchema = z.object({
 
 const outputFieldTypeSchema = z.enum(['string', 'int', 'float', 'number', 'boolean', 'datetime', 'json']);
 
-const sourceSchema = z.object({
+export const sourceSchema = z.object({
   id: z.string(),
   name: z.string(),
   url: z.string().url(),
@@ -116,6 +116,30 @@ function buildOutputParser(outputSchema: SourceConfig['outputSchema']) {
     shape[key] = factory();
   });
   return z.object(shape);
+}
+
+export function resolveSourceConfig(baseConfig: SourceConfig): ResolvedSourceConfig {
+  const effectiveIntervalMs = Math.max(MIN_CRAWL_INTERVAL_MS, baseConfig.schedule.intervalMs);
+  const schedule: ResolvedSchedule = {
+    ...baseConfig.schedule,
+    effectiveIntervalMs
+  };
+
+  const selectorList: ResolvedSelector[] = Object.entries(baseConfig.selectors).map(([field, selector]) => ({
+    field,
+    ...selector
+  }));
+
+  const outputParser = buildOutputParser(baseConfig.outputSchema);
+  const resolvedEnabled = baseConfig.allowedToScrape && baseConfig.enabled;
+
+  return {
+    ...baseConfig,
+    enabled: resolvedEnabled,
+    selectorList,
+    schedule,
+    outputParser
+  };
 }
 
 function applyParseRule(value: unknown, rule: z.infer<typeof parseRuleSchema>) {
@@ -194,26 +218,8 @@ export async function loadSourceConfigs(
       }
 
       const baseConfig = parsed.data;
-      const effectiveIntervalMs = Math.max(MIN_CRAWL_INTERVAL_MS, baseConfig.schedule.intervalMs);
-      const schedule: ResolvedSchedule = {
-        ...baseConfig.schedule,
-        effectiveIntervalMs
-      };
-
-      const selectorList: ResolvedSelector[] = Object.entries(baseConfig.selectors).map(([field, selector]) => ({
-        field,
-        ...selector
-      }));
-
-      const outputParser = buildOutputParser(baseConfig.outputSchema);
-      const resolvedEnabled = baseConfig.allowedToScrape && baseConfig.enabled;
-      configs.push({
-        ...baseConfig,
-        enabled: resolvedEnabled,
-        selectorList,
-        schedule,
-        outputParser
-      });
+      const resolved = resolveSourceConfig(baseConfig);
+      configs.push(resolved);
       console.info(`[config] loaded source ${baseConfig.id} from ${path.basename(filePath)}`);
     } catch (error) {
       console.error(
@@ -261,4 +267,4 @@ export async function upsertSources(prisma: PrismaClient, configs: ResolvedSourc
   }
 }
 
-export { browserSchema, scheduleSchema, selectorSchema, parseRuleSchema };
+export { browserSchema, scheduleSchema, selectorSchema, parseRuleSchema, formatZodError };
