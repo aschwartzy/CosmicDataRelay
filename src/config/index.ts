@@ -43,7 +43,7 @@ const selectorsSchema = z.record(selectorSchema);
 const parseRuleSchema = z.object({
   field: z.string(),
   targetField: z.string().optional(),
-  type: z.enum(['string', 'int', 'float', 'datetime', 'number']).default('string'),
+  type: z.enum(['string', 'int', 'float', 'datetime', 'number', 'json']).default('string'),
   regex: z.string().optional(),
   unit: z.string().optional()
 });
@@ -170,6 +170,14 @@ function applyParseRule(value: unknown, rule: z.infer<typeof parseRuleSchema>) {
     case 'datetime': {
       const dateValue = parsedValue instanceof Date ? parsedValue : new Date(String(parsedValue));
       return Number.isNaN(dateValue.getTime()) ? parsedValue : dateValue;
+    }
+    case 'json': {
+      if (typeof parsedValue !== 'string') return parsedValue;
+      try {
+        return JSON.parse(parsedValue);
+      } catch (error) {
+        return parsedValue;
+      }
     }
     default:
       return parsedValue;
