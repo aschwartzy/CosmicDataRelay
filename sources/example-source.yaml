@@ -2,26 +2,33 @@ id: example-source
 name: Example Source
 url: https://example.com
 description: Example YAML configuration for CosmicDataRelay
+allowedToScrape: true
+enabled: true
 browser:
   headless: true
-  timeout: 30000
+  userAgent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)
+  viewport:
+    width: 1280
+    height: 720
+  timeouts:
+    navigationMs: 30000
+    actionMs: 10000
 schedule:
-  minInterval: 300
-  jitter: 30
+  intervalMs: 30000
+  jitterMs: 2000
   backoffMultiplier: 2
-  maxBackoff: 1800
+  maxBackoffMs: 900000
+  failureLimit: 5
 selectors:
-  - field: title
-    selector: "h1"
-  - field: description
-    selector: "p"
+  title:
+    css: "h1"
+  description:
+    css: "p"
 parse:
   - field: title
     type: string
-    regex: ''
   - field: description
     type: string
-    regex: ''
 outputSchema:
   title: string
   description: string

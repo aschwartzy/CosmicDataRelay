@@ -39,15 +39,18 @@ export class Scheduler {
   }
 
   private computeJitterMs(source: ResolvedSourceConfig) {
-    const jitterSeconds = source.schedule.jitter;
-    if (!jitterSeconds) return 0;
-    const offset = (Math.random() * jitterSeconds * 2 - jitterSeconds) * 1000;
+    const jitterMs = source.schedule.jitterMs;
+    if (!jitterMs) return 0;
+    const offset = Math.random() * jitterMs * 2 - jitterMs;
     return Math.floor(offset);
   }
 
   private async tick() {
     const now = Date.now();
     for (const source of this.sources) {
+      if (!source.enabled) {
+        continue;
+      }
       if (this.inFlight >= this.maxConcurrency) {
         return;
       }
@@ -67,19 +70,26 @@ export class Scheduler {
     this.inFlight += 1;
     const startedAt = Date.now();
     const jitter = this.computeJitterMs(source);
-    state.nextRun = Date.now() + source.schedule.minInterval * 1000 + jitter;
+    state.nextRun = Date.now() + source.schedule.effectiveIntervalMs + jitter;
     try {
       await crawlSource(this.prisma, source);
       state.attempts = 0;
-      state.nextRun = Date.now() + source.schedule.minInterval * 1000 + jitter;
+      state.nextRun = Date.now() + source.schedule.effectiveIntervalMs + jitter;
       eventBus.emit('scheduler:success', { sourceId: source.id, durationMs: Date.now() - startedAt });
     } catch (error) {
       state.attempts += 1;
-      const backoffSeconds = Math.min(
-        source.schedule.minInterval * Math.pow(source.schedule.backoffMultiplier, state.attempts),
-        source.schedule.maxBackoff
+      const backoffMs = Math.min(
+        source.schedule.effectiveIntervalMs * Math.pow(source.schedule.backoffMultiplier, state.attempts),
+        source.schedule.maxBackoffMs
       );
-      state.nextRun = Date.now() + backoffSeconds * 1000 + jitter;
+      state.nextRun = Date.now() + backoffMs + jitter;
+      if (state.attempts >= source.schedule.failureLimit) {
+        const pauseMs = 24 * 60 * 60 * 1000;
+        state.nextRun = Date.now() + pauseMs;
+        console.warn(
+          `[scheduler] ${source.id} exceeded failure limit (${source.schedule.failureLimit}); pausing for 24h`
+        );
+      }
       eventBus.emit('scheduler:error', { sourceId: source.id, error });
     } finally {
       await this.prisma.sourceStatus.create({
